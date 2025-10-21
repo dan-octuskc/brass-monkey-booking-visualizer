@@ -10,3 +10,6 @@ bm_env/
 booking_outputs/*
 !booking_outputs/.gitkeep
 .streamlit/
+!booking_outputs/cumulative_asof_snapshot.csv
+!booking_outputs/daily_snapshot.csv
+!booking_outputs/week_over_week_latest.csv
