@@ -1,0 +1,12 @@
+.DS_Store
+
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+bm_env/
+*.csv
+booking_outputs/*
+!booking_outputs/.gitkeep
+.streamlit/
