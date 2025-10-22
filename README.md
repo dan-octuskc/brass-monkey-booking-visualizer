@@ -3,7 +3,7 @@
 Simple Streamlit app for visualizing booking lead time, day-of-week patterns, and pacing.
 
 ## App scripts
-- `visualizer2.py` or `visualizer2_fixed.py` — Streamlit dashboard
+- `visualizer3.py` or `visualizer2_fixed.py` — Streamlit dashboard
 - `booking_lead_analysis.py` — data prep to produce `booking_outputs/*.csv`
 - `make_report.py` — optional static HTML report
 
