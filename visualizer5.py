@@ -367,7 +367,7 @@ if mode == "Executive overview":
     # Next Fri/Sat vs weekday-median baseline at same lead (as of selected date)
     ref = pd.to_datetime(as_of_sel)
     fri = next_weekday(ref, 4)  # strictly next Friday
-    sat = next_weekday(ref, 5)  # strictly next Saturday
+    sat = (pd.to_datetime(fri) + pd.Timedelta(days=1)).date()
 
     def get_cum(bd, asof):
         row = cum_eff[(cum_eff["booking_date"] == pd.to_datetime(bd)) & (cum_eff["as_of_date"] == pd.to_datetime(asof))]
