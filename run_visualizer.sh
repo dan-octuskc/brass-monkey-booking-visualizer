@@ -14,4 +14,4 @@ python -m pip install -r requirements.txt
 
 # Run on a non-default port if 8501 is busy
 PORT="${1:-8501}"
-exec streamlit run visualizer4.py --server.runOnSave true --server.port "$PORT"
+exec streamlit run visualizer5.py --server.runOnSave true --server.port "$PORT"
