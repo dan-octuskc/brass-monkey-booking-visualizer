@@ -356,11 +356,11 @@ if mode == "Executive overview":
 
     with st.expander("What am I looking at?"):
     st.markdown("""
-- **Lookahead days** = days until the booking date (*booking_date − as_of_date*).
-- **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
-- **Daily adds** = new guests/bookings added on that day toward that booking date.
-- **Baseline** = weekday **median** at the same lead (more robust than the mean).
-""")
+    - **Lookahead days** = days until the booking date (*booking_date − as_of_date*).
+    - **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
+    - **Daily adds** = new guests/bookings added on that day toward that booking date.
+    - **Baseline** = weekday **median** at the same lead (more robust than the mean).
+    """)
 
     st.divider()
 
