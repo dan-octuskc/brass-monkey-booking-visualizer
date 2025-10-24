@@ -355,7 +355,7 @@ if mode == "Executive overview":
     k4.metric("Biggest mover last 24h", f"{fmt_date_opt(mover_date)} (+{num(mover_val)})" if mover_date else "—")
 
     with st.expander("What am I looking at?"):
-    st.markdown("""
+        st.markdown("""
     - **Lookahead days** = days until the booking date (*booking_date − as_of_date*).
     - **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
     - **Daily adds** = new guests/bookings added on that day toward that booking date.
