@@ -332,6 +332,13 @@ def pacing_table(today=None, horizon=21):
     df = pd.DataFrame(rows)
     return df
 
+    def next_weekday(dts, weekday_int):
+    # 0=Mon ... 4=Fri 5=Sat 6=Sun
+    days_ahead = (weekday_int - dts.weekday() + 7) % 7
+    if days_ahead == 0:  # "next" never means "today"
+        days_ahead = 7
+    return (dts + pd.Timedelta(days=days_ahead)).date()
+
 # ==============================
 # Executive Overview
 # ==============================
@@ -359,8 +366,8 @@ if mode == "Executive overview":
 
     # Next Fri/Sat vs weekday-median baseline at same lead (as of selected date)
     ref = pd.to_datetime(as_of_sel)
-    fri = (ref + pd.Timedelta(days=(4 - ref.weekday()) % 7)).date()
-    sat = (ref + pd.Timedelta(days=(5 - ref.weekday()) % 7)).date()
+    fri = next_weekday(ref, 4)  # strictly next Friday
+    sat = next_weekday(ref, 5)  # strictly next Saturday
 
     def get_cum(bd, asof):
         row = cum_eff[(cum_eff["booking_date"] == pd.to_datetime(bd)) & (cum_eff["as_of_date"] == pd.to_datetime(asof))]
