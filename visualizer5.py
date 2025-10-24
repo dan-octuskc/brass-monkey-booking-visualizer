@@ -1,5 +1,4 @@
-
-# visualizer4.py
+# visualizer5.py
 import os
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -27,13 +26,24 @@ LOCAL_DIRS = [
 REQUIRED_FILES = ["cumulative_asof_snapshot.csv", "daily_snapshot.csv"]
 
 # ==============================
+# Local timezone + 'today' helper
+# ==============================
+try:
+    from zoneinfo import ZoneInfo  # py3.9+
+    CT = ZoneInfo("America/Chicago")
+except Exception:
+    CT = None
+
+def today_local():
+    return (datetime.now(CT).date() if CT else datetime.now().date())
+
+# ==============================
 # Query params (deep-link saved views)
 # ==============================
 def _get_params():
     try:
         return dict(st.query_params)
     except Exception:
-        # Fallback for older Streamlit
         return st.experimental_get_query_params()
 
 def _set_params(**kwargs):
@@ -192,6 +202,7 @@ def num(x, zero="0"):
 # ==============================
 cum_raw, daily_raw, wow_raw, data_source = load_core_data()
 
+# Parse dates
 for col in ["booking_date", "as_of_date"]:
     if col in cum_raw.columns:
         cum_raw[col] = pd.to_datetime(cum_raw[col], errors="coerce")
@@ -199,6 +210,7 @@ for col in ["transaction_date", "booking_date"]:
     if col in daily_raw.columns:
         daily_raw[col] = pd.to_datetime(daily_raw[col], errors="coerce")
 
+# Safe metric columns
 for col in ["cum_guests", "cum_bookings"]:
     if col not in cum_raw.columns:
         cum_raw[col] = np.nan
@@ -206,15 +218,24 @@ for col in ["guests", "bookings"]:
     if col not in daily_raw.columns:
         daily_raw[col] = np.nan
 
+# Build cum and daily adds
 cum = cum_raw.sort_values(["booking_date", "as_of_date"]).copy()
 cum["daily_add_guests"]   = cum.groupby("booking_date")["cum_guests"].diff().fillna(cum["cum_guests"])
 cum["daily_add_bookings"] = cum.groupby("booking_date")["cum_bookings"].diff().fillna(cum["cum_bookings"])
 
 cum["booking_dow"] = cum["booking_date"].dt.day_name()
 cum["lookahead_days"] = cum["lookahead_days"].astype("int32", errors="ignore")
-all_booking_dates = to_py_dates(cum["booking_date"])
+
+# ---- Clamp by 'today' in America/Chicago so future as_of rows never appear
+cum["as_of_date"] = pd.to_datetime(cum["as_of_date"], errors="coerce")
+TODAY = today_local()
+cum = cum[cum["as_of_date"].dt.date <= TODAY].copy()
+
+# Recompute latest_as_of after clamping
 latest_as_of_ts = pd.to_datetime(cum["as_of_date"]).max()
-latest_as_of = latest_as_of_ts.date() if pd.notna(latest_as_of_ts) else date.today()
+latest_as_of = (latest_as_of_ts.date() if pd.notna(latest_as_of_ts) else TODAY)
+
+all_booking_dates = to_py_dates(cum["booking_date"])
 
 # Weekday baseline (median by lead time)
 def weekday_baseline(metric_key: str):
@@ -318,11 +339,17 @@ if mode == "Executive overview":
     m_cum, m_add = metric_cols()
     st.caption(f"Data source: {data_source}")
 
-    # Key questions cards
+    # Explicit "as of" selector (clamped to latest available after future-date filter)
+    min_asof = pd.to_datetime(cum["as_of_date"]).min().date() if len(cum) else latest_as_of
+    as_of_sel = st.date_input("As of date", value=latest_as_of, min_value=min_asof, max_value=latest_as_of)
+
+    # Work on a clamped view <= as_of_sel
+    cum_eff = cum[cum["as_of_date"] <= pd.to_datetime(as_of_sel)].copy()
+
+    # KPI cards
     k1, k2, k3, k4 = st.columns(4)
-    # Last 24h movers
-    last_asof = pd.to_datetime(cum["as_of_date"]).max()
-    last_window = cum[cum["as_of_date"] == last_asof]
+    # Biggest mover in the last 24h (based on daily adds for that as_of day)
+    last_window = cum_eff[cum_eff["as_of_date"] == pd.to_datetime(as_of_sel)]
     if not last_window.empty:
         delta = last_window.sort_values(m_add, ascending=False).head(1)
         mover_date = delta["booking_date"].iloc[0].date()
@@ -330,56 +357,95 @@ if mode == "Executive overview":
     else:
         mover_date, mover_val = None, 0
 
-    # Next Fri/Sat status
-    ref = pd.to_datetime(last_asof)
+    # Next Fri/Sat vs weekday-median baseline at same lead (as of selected date)
+    ref = pd.to_datetime(as_of_sel)
     fri = (ref + pd.Timedelta(days=(4 - ref.weekday()) % 7)).date()
     sat = (ref + pd.Timedelta(days=(5 - ref.weekday()) % 7)).date()
 
     def get_cum(bd, asof):
-        row = cum[(cum["booking_date"] == pd.to_datetime(bd)) & (cum["as_of_date"] == pd.to_datetime(asof))]
+        row = cum_eff[(cum_eff["booking_date"] == pd.to_datetime(bd)) & (cum_eff["as_of_date"] == pd.to_datetime(asof))]
         return float(row[m_cum].iloc[0]) if len(row) else np.nan
 
-    fri_c = get_cum(fri, last_asof)
-    sat_c = get_cum(sat, last_asof)
+    fri_c = get_cum(fri, as_of_sel)
+    sat_c = get_cum(sat, as_of_sel)
 
-    # Median baselines at same lead
-    lead_fri = (pd.to_datetime(fri) - last_asof).days
-    lead_sat = (pd.to_datetime(sat) - last_asof).days
+    # Baselines from entire history (median by DOW & lead)
+    lead_fri = (pd.to_datetime(fri) - pd.to_datetime(as_of_sel)).days
+    lead_sat = (pd.to_datetime(sat) - pd.to_datetime(as_of_sel)).days
     base = weekday_baseline(m_cum)
     fri_base = base[(base["booking_dow"] == "Friday") & (base["lookahead_days"] == lead_fri)][m_cum].squeeze() if not base.empty else np.nan
     sat_base = base[(base["booking_dow"] == "Saturday") & (base["lookahead_days"] == lead_sat)][m_cum].squeeze() if not base.empty else np.nan
 
-    k1.metric("As of", fmt_date_opt(last_asof.date()))
-    k2.metric(f"Next Fri {fmt_date_opt(fri)}", num(fri_c), delta=num(fri_c - fri_base) if pd.notna(fri_c) and pd.notna(fri_base) else None)
-    k3.metric(f"Next Sat {fmt_date_opt(sat)}", num(sat_c), delta=num(sat_c - sat_base) if pd.notna(sat_c) and pd.notna(sat_base) else None)
-    k4.metric("Biggest mover last 24h", f"{fmt_date_opt(mover_date)} (+{num(mover_val)})" if mover_date else "—")
+    k1.metric("As of", as_of_sel.strftime("%Y-%m-%d"))
+    k2.metric(f"Next Fri {fri.strftime('%Y-%m-%d')}", f"{int(fri_c):,}" if pd.notna(fri_c) else "—",
+              delta=(f"{int(fri_c - fri_base):+,}" if (pd.notna(fri_c) and pd.notna(fri_base)) else None))
+    k3.metric(f"Next Sat {sat.strftime('%Y-%m-%d')}", f"{int(sat_c):,}" if pd.notna(sat_c) else "—",
+              delta=(f"{int(sat_c - sat_base):+,}" if (pd.notna(sat_c) and pd.notna(sat_base)) else None))
+    k4.metric("Biggest mover last 24h", f"{mover_date} (+{mover_val:,})" if mover_date else "—")
 
     with st.expander("What am I looking at?"):
         st.markdown("""
-    - **Lookahead days** = days until the booking date (*booking_date − as_of_date*).
-    - **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
-    - **Daily adds** = new guests/bookings added on that day toward that booking date.
-    - **Baseline** = weekday **median** at the same lead (more robust than the mean).
-    """)
+- **Lookahead days** = days until the booking date (*booking_date − as_of_date*).
+- **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
+- **Daily adds** = new guests/bookings added on that day toward that booking date.
+- **Baseline** = weekday **median** at the same lead (more robust than the mean).
+""" )
 
     st.divider()
 
-    # Heatmap: variance vs weekday median baseline
-    st.subheader("Where are we winning or lagging (vs typical)")
+    # ---- Heatmap: % vs baseline, recent window, denser grid
+    st.subheader("Where we’re over/under typical (percent vs baseline)")
+
+    weeks = st.slider("Weeks to show", min_value=4, max_value=16, value=8, help="Window for booking_dates on the Y-axis.")
+    cutoff_bd = pd.to_datetime(as_of_sel) - pd.Timedelta(days=7*weeks)
+
     ycol = m_cum if view == "Cumulative" else m_add
-    tmp = cum.copy()
+
+    tmp = cum_eff.copy()
     base = weekday_baseline(ycol)
     tmp = tmp.merge(base, on=["booking_dow", "lookahead_days"], suffixes=("", "_baseline"), how="left")
-    tmp["delta_vs_baseline"] = tmp[ycol] - tmp[f"{ycol}_baseline"]
-    mat = tmp.groupby(["booking_date", "lookahead_days"])["delta_vs_baseline"].mean().reset_index()
+    denom = tmp[f"{ycol}_baseline"].replace({0: np.nan})
+    tmp["pct_vs_baseline"] = (tmp[ycol] / denom) - 1.0
+
+    # Only show recent booking_dates
+    tmp = tmp[tmp["booking_date"] >= cutoff_bd]
+
+    mat = tmp.groupby(["booking_date", "lookahead_days"])['pct_vs_baseline'].median().reset_index()
+
     if mat.empty:
-        st.info("No data.")
+        st.info("No data in the selected window.")
     else:
-        pivot = mat.pivot(index="booking_date", columns="lookahead_days", values="delta_vs_baseline").fillna(0)
-        vmax = np.nanmax(np.abs(pivot.values)) if np.isfinite(pivot.values).any() else 1
-        fig = px.imshow(pivot, aspect="auto", origin="lower", color_continuous_scale="RdBu", zmin=-vmax, zmax=vmax)
+        max_lead = int(mat["lookahead_days"].max())
+        all_leads = list(range(0, max_lead + 1))
+        pivot = (mat.pivot(index="booking_date", columns="lookahead_days", values="pct_vs_baseline")
+                    .reindex(columns=all_leads)
+                    .interpolate(axis=1))
+
+        vmax = float(np.nanpercentile(np.abs(pivot.values), 95)) if np.isfinite(pivot.values).any() else 0.5
+        vmax = max(vmax, 0.1)
+
+        fig = px.imshow(
+            pivot, aspect="auto", origin="lower",
+            color_continuous_scale="RdBu", zmin=-vmax, zmax=vmax
+        )
         fig.update_layout(xaxis_title="Lookahead days", yaxis_title="Booking date")
+        fig.update_yaxes(tickformat="%Y-%m-%d")
         st.plotly_chart(fig, use_container_width=True)
+
+        # Top under / over list (today's as_of selection)
+        st.subheader("Top under / over vs baseline (today’s view)")
+        today_slice = tmp[tmp["as_of_date"] == pd.to_datetime(as_of_sel)].copy()
+        if not today_slice.empty:
+            today_slice = today_slice.sort_values("pct_vs_baseline")
+            under = today_slice.head(3).assign(**{"% vs base": (today_slice["pct_vs_baseline"]*100).round(0)})
+            over  = today_slice.tail(3).assign(**{"% vs base": (today_slice["pct_vs_baseline"]*100).round(0)})
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Most under**")
+                st.dataframe(under[["booking_date","lookahead_days","% vs base"]], use_container_width=True)
+            with col2:
+                st.write("**Most over**")
+                st.dataframe(over[["booking_date","lookahead_days","% vs base"]], use_container_width=True)
 
 # ==============================
 # Compare Dates
@@ -447,7 +513,7 @@ elif mode == "Upcoming pacing":
 
         # Traffic-light styling
         def _color_pace(val):
-            if pd.isna(val): 
+            if pd.isna(val):
                 return ""
             if val < 0.9:  return "background-color: #ffe5e5"  # red
             if val > 1.1:  return "background-color: #e6ffed"  # green
@@ -460,7 +526,7 @@ elif mode == "Upcoming pacing":
                     "pace_index": "{:.2f}",
                     "current": "{:,.0f}",
                     "last_week_same_lead": "{:,.0f}",
-                    "dow_median_same_lead": "{:,.1f}",
+                    "dow_median_same_lead": "{:.1f}",
                     "to_target": "{:,.0f}",
                 })
         )
