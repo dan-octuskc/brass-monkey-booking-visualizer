@@ -332,7 +332,7 @@ def pacing_table(today=None, horizon=21):
     df = pd.DataFrame(rows)
     return df
 
-    def next_weekday(dts, weekday_int):
+def next_weekday(dts, weekday_int):
     # 0=Mon ... 4=Fri 5=Sat 6=Sun
     days_ahead = (weekday_int - dts.weekday() + 7) % 7
     if days_ahead == 0:  # "next" never means "today"
