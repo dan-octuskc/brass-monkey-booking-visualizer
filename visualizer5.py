@@ -1,4 +1,18 @@
+
 # visualizer5.py
+"""
+Bookings & Marketing Overview (Streamlit)
+
+Adds Booking Method support:
+- Loads optional `cumulative_asof_by_method.csv`
+- Sidebar multiselect to include/exclude methods
+- When methods are selected, aggregates across chosen methods and swaps into `cum`
+- All views (Executive overview, comparisons, pacing) honor the filter
+
+Also ensures:
+- "Next Friday/Saturday" are the same upcoming weekend (Sat = Fri + 1 day)
+- Future `as_of_date` rows are dropped (clamped to today in America/Chicago)
+"""
 import os
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -35,6 +49,7 @@ except Exception:
     CT = None
 
 def today_local():
+    """Return today's date in America/Chicago (if available)."""
     return (datetime.now(CT).date() if CT else datetime.now().date())
 
 # ==============================
@@ -153,6 +168,25 @@ def _load_campaigns():
                 pass
     return pd.DataFrame()
 
+# ----- NEW: load by-method cumulative snapshot
+@st.cache_data(ttl=300, show_spinner=False)
+def load_by_method_snapshot():
+    # Try local dirs first
+    for d in LOCAL_DIRS:
+        p = d / "cumulative_asof_by_method.csv"
+        if p.exists():
+            return pd.read_csv(p, parse_dates=["booking_date", "as_of_date"])
+    # Try GitHub RAW_BASE
+    if RAW_BASE:
+        try:
+            return pd.read_csv(
+                f"{RAW_BASE}/cumulative_asof_by_method.csv",
+                parse_dates=["booking_date", "as_of_date"]
+            )
+        except Exception:
+            pass
+    return None
+
 # ==============================
 # Utilities
 # ==============================
@@ -197,6 +231,14 @@ def num(x, zero="0"):
         except Exception:
             return zero
 
+def next_weekday(dts, weekday_int):
+    """Return the next occurrence of weekday_int after dts (0=Mon..6=Sun).
+    'Next' never means 'today'."""
+    days_ahead = (weekday_int - dts.weekday() + 7) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return (dts + pd.Timedelta(days=days_ahead)).date()
+
 # ==============================
 # Transform core data
 # ==============================
@@ -235,16 +277,16 @@ cum = cum[cum["as_of_date"].dt.date <= TODAY].copy()
 latest_as_of_ts = pd.to_datetime(cum["as_of_date"]).max()
 latest_as_of = (latest_as_of_ts.date() if pd.notna(latest_as_of_ts) else TODAY)
 
-all_booking_dates = to_py_dates(cum["booking_date"])
-
-# Weekday baseline (median by lead time)
-def weekday_baseline(metric_key: str):
-    base = cum.groupby(["booking_dow", "lookahead_days"])[metric_key].median().reset_index()
-    return base
-
 # ==============================
-# Sidebar
+# Sidebar (add Booking Method filter if file exists)
 # ==============================
+cum_by_method = load_by_method_snapshot()
+method_options = (
+    sorted(cum_by_method["booking_method"].dropna().unique().tolist())
+    if (cum_by_method is not None and not cum_by_method.empty and "booking_method" in cum_by_method.columns)
+    else []
+)
+
 _mode_opts = ["Executive overview","Compare dates","Compare day of week","Upcoming pacing","Marketing vs bookings"]
 _mode_qs = (qs.get("mode") or ["Executive_overview"])[0].replace("_"," ")
 _mode_idx = _mode_opts.index(_mode_qs) if _mode_qs in _mode_opts else 0
@@ -260,6 +302,10 @@ mode = st.sidebar.radio("Mode", _mode_opts, index=_mode_idx)
 metric = st.sidebar.radio("Metric", ["Guests", "Bookings"], index=_metric_idx)
 view   = st.sidebar.radio("View", ["Cumulative", "Daily adds"], index=_view_idx)
 
+picked_methods = []
+if method_options:
+    picked_methods = st.sidebar.multiselect("Booking method", method_options, default=method_options)
+
 # Keep URL in sync so the view is shareable
 _set_params(
     mode=mode.replace(" ","_"),
@@ -271,6 +317,37 @@ def metric_cols(prefix=""):
     if metric == "Guests":
         return f"{prefix}cum_guests", f"{prefix}daily_add_guests"
     return f"{prefix}cum_bookings", f"{prefix}daily_add_bookings"
+
+# --- Apply booking method filter if available/selected
+if cum_by_method is not None and method_options and picked_methods:
+    cm = cum_by_method[cum_by_method["booking_method"].isin(picked_methods)].copy()
+
+    # Aggregate across chosen methods to match the shape expected by the app
+    cm = (cm
+          .groupby(["booking_date", "as_of_date"], as_index=False)[["cum_guests", "cum_bookings"]]
+          .sum())
+
+    # Rebuild dependent fields the app expects
+    cm = cm.sort_values(["booking_date", "as_of_date"])
+    cm["daily_add_guests"]   = cm.groupby("booking_date")["cum_guests"].diff().fillna(cm["cum_guests"])
+    cm["daily_add_bookings"] = cm.groupby("booking_date")["cum_bookings"].diff().fillna(cm["cum_bookings"])
+    cm["booking_dow"] = pd.to_datetime(cm["booking_date"]).dt.day_name()
+    cm["lookahead_days"] = (pd.to_datetime(cm["booking_date"]) - pd.to_datetime(cm["as_of_date"])).dt.days
+
+    # Clamp to today again for safety
+    cm["as_of_date"] = pd.to_datetime(cm["as_of_date"], errors="coerce")
+    cm = cm[cm["as_of_date"].dt.date <= TODAY].copy()
+
+    # Swap in the filtered snapshot
+    cum = cm
+
+# Compute booking dates AFTER method filter is applied
+all_booking_dates = to_py_dates(cum["booking_date"])
+
+# Weekday baseline (median by lead time), uses current `cum`
+def weekday_baseline(metric_key: str):
+    base = cum.groupby(["booking_dow", "lookahead_days"])[metric_key].median().reset_index()
+    return base
 
 # ==============================
 # Reusable builders
@@ -332,13 +409,6 @@ def pacing_table(today=None, horizon=21):
     df = pd.DataFrame(rows)
     return df
 
-def next_weekday(dts, weekday_int):
-    # 0=Mon ... 4=Fri 5=Sat 6=Sun
-    days_ahead = (weekday_int - dts.weekday() + 7) % 7
-    if days_ahead == 0:  # "next" never means "today"
-        days_ahead = 7
-    return (dts + pd.Timedelta(days=days_ahead)).date()
-
 # ==============================
 # Executive Overview
 # ==============================
@@ -366,8 +436,8 @@ if mode == "Executive overview":
 
     # Next Fri/Sat vs weekday-median baseline at same lead (as of selected date)
     ref = pd.to_datetime(as_of_sel)
-    fri = next_weekday(ref, 4)  # strictly next Friday
-    sat = (pd.to_datetime(fri) + pd.Timedelta(days=1)).date()
+    fri = next_weekday(ref, 4)                        # strictly next Friday
+    sat = (pd.to_datetime(fri) + pd.Timedelta(days=1)).date()  # Saturday paired with that Friday
 
     def get_cum(bd, asof):
         row = cum_eff[(cum_eff["booking_date"] == pd.to_datetime(bd)) & (cum_eff["as_of_date"] == pd.to_datetime(asof))]
@@ -396,7 +466,7 @@ if mode == "Executive overview":
 - **Cumulative** = total guests/bookings captured so far for that booking date (as of each day).
 - **Daily adds** = new guests/bookings added on that day toward that booking date.
 - **Baseline** = weekday **median** at the same lead (more robust than the mean).
-""" )
+""")
 
     st.divider()
 
