@@ -265,8 +265,11 @@ cum = cum_raw.sort_values(["booking_date", "as_of_date"]).copy()
 cum["daily_add_guests"]   = cum.groupby("booking_date")["cum_guests"].diff().fillna(cum["cum_guests"])
 cum["daily_add_bookings"] = cum.groupby("booking_date")["cum_bookings"].diff().fillna(cum["cum_bookings"])
 
-cum["booking_dow"] = cum["booking_date"].dt.day_name()
-cum["lookahead_days"] = cum["lookahead_days"].astype("int32", errors="ignore")
+# Derive lookahead from dates (snapshot files don't include it)
+cum["as_of_date"]   = pd.to_datetime(cum["as_of_date"], errors="coerce")
+cum["booking_date"] = pd.to_datetime(cum["booking_date"], errors="coerce")
+cum["lookahead_days"] = (cum["booking_date"] - cum["as_of_date"]).dt.days
+cum["booking_dow"]    = cum["booking_date"].dt.day_name()
 
 # ---- Clamp by 'today' in America/Chicago so future as_of rows never appear
 cum["as_of_date"] = pd.to_datetime(cum["as_of_date"], errors="coerce")
