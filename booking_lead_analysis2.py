@@ -5,9 +5,9 @@ from pathlib import Path
 
 # --- Fixed data path ---
 DATA_DIR = Path("/Users/zaklelex/Desktop/BM_data/")
-INPUT_FILE = DATA_DIR / "the-brass-monkey-kansas-city-38420-Transactions-2025-09-01-2025-10-22.csv"  # place your CSV here with this name
+INPUT_FILE = DATA_DIR / "the-brass-monkey-kansas-city-38420-Transactions-2025-09-01-2025-10-25.csv"  # place your CSV here with this name
 OUTPUT_DIR = DATA_DIR / "booking_outputs"
-TARGET_WEEKDAY = 2  # Wednesday
+TARGET_WEEKDAY = 6  # Wednesday
 
 def load_and_clean(df: pd.DataFrame) -> pd.DataFrame:
     # Keep only BOOKED rows

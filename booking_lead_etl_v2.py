@@ -9,8 +9,8 @@
 #  - booking_outputs/cumulative_asof_by_method.csv
 #
 # Usage:
-#   python booking_lead_etl_v2.py --in "/Users/zaklelex/Desktop/BM_data/the-brass-monkey-*.csv" --out "/Users/zaklelex/Desktop/BM_data/booking_outputs"
-#   python booking_lead_etl_v2.py --in "/Users/zaklelex/Desktop/BM_data/the-brass-monkey-kansas-city-38420-Transactions-2025-09-01-2025-10-24.csv"
+#   python3 booking_lead_etl_v2.py --in "/Users/zaklelex/Desktop/BM_data/the-brass-monkey-*.csv" --out "/Users/zaklelex/Desktop/BM_data/booking_outputs"
+#   python3 booking_lead_etl_v2.py --in "/Users/zaklelex/Desktop/BM_data/the-brass-monkey-kansas-city-38420-Transactions-2025-09-01-2025-10-24.csv"
 #
 import argparse
 import sys
