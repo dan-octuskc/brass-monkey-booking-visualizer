@@ -279,6 +279,7 @@ cum = cum[cum["as_of_date"].dt.date <= TODAY].copy()
 # Recompute latest_as_of after clamping
 latest_as_of_ts = pd.to_datetime(cum["as_of_date"]).max()
 latest_as_of = (latest_as_of_ts.date() if pd.notna(latest_as_of_ts) else TODAY)
+DISPLAY_MAX_ASOF = max(latest_as_of, TODAY)
 
 # ==============================
 # Sidebar (add Booking Method filter if file exists)
@@ -421,15 +422,25 @@ if mode == "Executive overview":
 
     # Explicit "as of" selector (clamped to latest available after future-date filter)
     min_asof = pd.to_datetime(cum["as_of_date"]).min().date() if len(cum) else latest_as_of
-    as_of_sel = st.date_input("As of date", value=latest_as_of, min_value=min_asof, max_value=latest_as_of)
 
-    # Work on a clamped view <= as_of_sel
-    cum_eff = cum[cum["as_of_date"] <= pd.to_datetime(as_of_sel)].copy()
+    as_of_sel = st.date_input(
+        "As of date",
+        value=DISPLAY_MAX_ASOF,
+        min_value=min_asof,
+        max_value=DISPLAY_MAX_ASOF
+    )
+
+    # If they pick a date beyond what we’ve actually ingested (e.g. today = 2025-10-25 but last ingest = 2025-10-24),
+    # we silently fall back to the latest real snapshot for the actual math.
+    analysis_cutoff = min(as_of_sel, latest_as_of)
+
+    # Work on a clamped view <= analysis_cutoff
+    cum_eff = cum[cum["as_of_date"] <= pd.to_datetime(analysis_cutoff)].copy()
 
     # KPI cards
     k1, k2, k3, k4 = st.columns(4)
     # Biggest mover in the last 24h (based on daily adds for that as_of day)
-    last_window = cum_eff[cum_eff["as_of_date"] == pd.to_datetime(as_of_sel)]
+    last_window = cum_eff[cum_eff["as_of_date"] == pd.to_datetime(analysis_cutoff)]
     if not last_window.empty:
         delta = last_window.sort_values(m_add, ascending=False).head(1)
         mover_date = delta["booking_date"].iloc[0].date()
@@ -446,12 +457,12 @@ if mode == "Executive overview":
         row = cum_eff[(cum_eff["booking_date"] == pd.to_datetime(bd)) & (cum_eff["as_of_date"] == pd.to_datetime(asof))]
         return float(row[m_cum].iloc[0]) if len(row) else np.nan
 
-    fri_c = get_cum(fri, as_of_sel)
-    sat_c = get_cum(sat, as_of_sel)
+    fri_c = get_cum(fri, analysis_cutoff)
+    sat_c = get_cum(sat, aanalysis_cutoff)
 
     # Baselines from entire history (median by DOW & lead)
-    lead_fri = (pd.to_datetime(fri) - pd.to_datetime(as_of_sel)).days
-    lead_sat = (pd.to_datetime(sat) - pd.to_datetime(as_of_sel)).days
+    lead_fri = (pd.to_datetime(fri) - pd.to_datetime(analysis_cutoff)).days
+    lead_sat = (pd.to_datetime(sat) - pd.to_datetime(analysis_cutoff)).days
     base = weekday_baseline(m_cum)
     fri_base = base[(base["booking_dow"] == "Friday") & (base["lookahead_days"] == lead_fri)][m_cum].squeeze() if not base.empty else np.nan
     sat_base = base[(base["booking_dow"] == "Saturday") & (base["lookahead_days"] == lead_sat)][m_cum].squeeze() if not base.empty else np.nan
@@ -514,7 +525,7 @@ if mode == "Executive overview":
 
         # Top under / over list (today's as_of selection)
         st.subheader("Top under / over vs baseline (today’s view)")
-        today_slice = tmp[tmp["as_of_date"] == pd.to_datetime(as_of_sel)].copy()
+        today_slice = tmp[tmp["as_of_date"] == pd.to_datetime(analysis_cutoff)].copy()
         if not today_slice.empty:
             today_slice = today_slice.sort_values("pct_vs_baseline")
             under = today_slice.head(3).assign(**{"% vs base": (today_slice["pct_vs_baseline"]*100).round(0)})
